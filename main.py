@@ -6,20 +6,16 @@ from groq import Groq
 import httpx
 from aiohttp import web
 
-# ВСТАВЛЕННЫЕ КЛЮЧИ
+# КЛЮЧИ
 TELEGRAM_BOT_TOKEN = "8712807627:AAGX6o0zYnfFPSERcLsBsFJVFELPhpQZX-c"
 GROQ_API_KEY = "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"
 
-# Инициализация бота
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 groq_client = Groq(api_key=GROQ_API_KEY, http_client=httpx.Client())
 chat_histories = {}
 
-# --- Часть для работы на Render (веб-сервер) ---
-async def handle(request):
-    return web.Response(text="Бот работает!")
-
+async def handle(request): return web.Response(text="OK")
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle)
@@ -28,32 +24,38 @@ async def start_web_server():
     site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 8080)))
     await site.start()
 
-# --- Логика бота ---
 @dp.message(CommandStart())
-async def command_start_handler(message: types.Message):
-    await message.answer(f"Привет! Я твой ИИ-помощник. Спрашивай что угодно!")
+async def cmd_start(message: types.Message):
     chat_histories[message.chat.id] = []
+    await message.answer("История очищена! Я готов к работе. Спрашивай!")
 
 @dp.message()
-async def handle_message(message: types.Message):
-    chat_id = message.chat.id
-    if chat_id not in chat_histories: chat_histories[chat_id] = []
-    chat_histories[chat_id].append({"role": "user", "content": message.text})
+async def handle_msg(message: types.Message):
+    cid = message.chat.id
+    if cid not in chat_histories: chat_histories[cid] = []
+    
+    chat_histories[cid].append({"role": "user", "content": message.text})
+    # Ограничиваем историю (только последние 10 сообщений)
+    if len(chat_histories[cid]) > 10: chat_histories[cid] = chat_histories[cid][-10:]
+
     try:
         response = groq_client.chat.completions.create(
-            messages=chat_histories[chat_id],
-            model="llama-3.1-8b-instant",
+            messages=chat_histories[cid],
+            model="llama-3.3-70b-versatile", # Используем самую мощную и новую модель
             temperature=0.7
         )
-        ai_res = response.choices[0].message.content
-        chat_histories[chat_id].append({"role": "assistant", "content": ai_res})
-        await message.answer(ai_res)
+        answer = response.choices[0].message.content
+        chat_histories[cid].append({"role": "assistant", "content": answer})
+        await message.answer(answer)
     except Exception as e:
-        await message.answer(f"Ошибка: {e}")
+        # Если ошибка, бот напишет её ПОЛНОСТЬЮ
+        error_text = str(e)
+        await message.answer(f"❌ Ошибка ИИ:\n{error_text}")
 
 async def main():
-    # Запускаем веб-сервер и бота одновременно
+    print("Бот запускается...")
     await asyncio.gather(start_web_server(), dp.start_polling(bot))
 
 if __name__ == "__main__":
     asyncio.run(main())
+
